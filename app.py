@@ -1,4 +1,5 @@
 import asyncio
+import os
 import random
 import time
 import uuid
@@ -7,9 +8,12 @@ from cachetools import TTLCache
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 
-app = FastAPI()
+APP_NAME = os.getenv("APP_NAME", "Order / Cargo stub")
+TTL = int(os.getenv("CACHE_TTL_SECONDS", str(3 * 60 * 60)))
+RESPONSE_DELAY = int(os.getenv("RESPONSE_DELAY_MS", "500")) / 1000
 
-TTL = 3 * 60 * 60  # keep data for 3 hours
+app = FastAPI(title=APP_NAME)
+
 orders = TTLCache(maxsize=1_000_000, ttl=TTL)   # orderId -> {"cargoId", "price"}
 cargos = TTLCache(maxsize=1_000_000, ttl=TTL)   # cargoId -> {"orderId", "step"}
 STATUSES = ["NEW", "In Process", "In Process", "Delivered", "Done"]
@@ -17,11 +21,21 @@ STATUSES = ["NEW", "In Process", "In Process", "Delivered", "Done"]
 
 @app.middleware("http")
 async def fixed_response_time(request: Request, call_next):
-    """Pad every response so it takes exactly 500 ms."""
+    """Pad every response so it takes at least RESPONSE_DELAY_MS."""
     start = time.perf_counter()
     response = await call_next(request)
-    await asyncio.sleep(max(0, 0.5 - (time.perf_counter() - start)))
+    await asyncio.sleep(max(0, RESPONSE_DELAY - (time.perf_counter() - start)))
     return response
+
+
+@app.get("/")
+async def root():
+    return {
+        "app": APP_NAME,
+        "cacheTtlSeconds": TTL,
+        "responseDelayMs": int(RESPONSE_DELAY * 1000),
+        "docs": "/docs",
+    }
 
 
 @app.get("/api/orderId/{order_id}")
